@@ -82,3 +82,8 @@ Say clearly these are assumptions, since the brief didn't define them: 1500 kWh 
 
 \##py check\_setup.py checks settings and the endpoint
 
+
+**9.#Repository**
+
+Github:https://github.com/kruthikay247/smart-energy-grid
+
