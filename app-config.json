@@ -1,0 +1,10 @@
+{
+  "command": "ls -la && python app.py",
+  "build_path": ".",
+  "stack": "python_3_9",
+  "env_variables": {},
+  "memory": 512,
+  "scripts": {
+    "preserve": "pip install -r requirements.txt -t ./deps"
+  }
+}

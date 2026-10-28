@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Microgrid Demand Forecast</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#e9eef1; --panel:#ffffff; --ink:#10303a; --muted:#5b7580; --line:#d3dde2;
+  --grid:#2b6cb0; --store:#c98200; --over:#b3261e; --ok:#2e7d5b;
+  --grid-bg:#e4eefa; --store-bg:#fbf0d6; --over-bg:#fbe4e2;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0f1c21; --panel:#172a31; --ink:#e3eef2; --muted:#93aab3; --line:#26414a;
+    --grid:#6fb0f0; --store:#f0b84a; --over:#ff8a80; --ok:#6fd0a4;
+    --grid-bg:#16324a; --store-bg:#3a2e12; --over-bg:#46201d;}
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Public Sans",system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
+h1{font-size:1.2rem;margin:0;font-weight:700}
+h2{font-size:1rem;margin:0 0 12px;font-weight:600}
+main{max-width:1200px;margin:0 auto;padding:20px 16px 48px;display:grid;gap:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px}
+.badge{display:inline-block;padding:4px 12px;border-radius:999px;font-weight:600;font-size:.85rem}
+.badge.grid{background:var(--grid-bg);color:var(--grid)}
+.badge.store{background:var(--store-bg);color:var(--store)}
+.badge.idle{background:var(--line);color:var(--muted)}
+#banner{display:none;border-left:6px solid var(--over);background:var(--over-bg);color:var(--over);padding:12px 16px;border-radius:4px;font-weight:600}
+#error{display:none;border-left:6px solid var(--over);background:var(--over-bg);padding:12px 16px;border-radius:4px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stat .v{font-size:1.8rem;font-weight:700;line-height:1.1}
+.stat .l{color:var(--muted);font-size:.85rem}
+.soc{height:10px;background:var(--line);border-radius:6px;overflow:hidden;margin-top:8px}
+.soc>i{display:block;height:100%;background:var(--ok);width:0;transition:width .5s}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+label{display:grid;gap:3px;font-size:.8rem;color:var(--muted)}
+input{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink);width:150px}
+input.num{width:110px}
+button{font:inherit;font-weight:600;padding:8px 14px;border-radius:4px;border:1px solid var(--ink);background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--ink);color:var(--panel)}
+button:focus-visible,input:focus-visible{outline:3px solid var(--grid);outline-offset:2px}
+button:disabled{opacity:.5;cursor:wait}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:860px){.two{grid-template-columns:1fr}}
+.tablewrap{overflow-x:auto;max-height:360px;overflow-y:auto}
+table{border-collapse:collapse;width:100%;font-size:.85rem}
+th,td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:600}
+tr.over td{background:var(--over-bg)}
+.chartbox{position:relative;height:340px}
+#logs{font-family:ui-monospace,Menlo,monospace;font-size:.78rem;max-height:200px;overflow:auto;white-space:pre-wrap;color:var(--muted)}
+.rm{border:none;color:var(--over);padding:2px 8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Microgrid demand forecast</h1>
+  <div>Active state: <span id="activeBadge" class="badge idle">No forecast yet</span></div>
+</header>
+
+<main>
+  <div id="banner" role="alert"></div>
+  <div id="error" role="alert"></div>
+
+  <section class="panel">
+    <h2>Telemetry input</h2>
+    <div class="controls">
+      <label>Timestamp<input type="datetime-local" id="f_ts" step="3600"></label>
+      <label>Temperature (°C)<input class="num" type="number" step="0.1" id="f_t"></label>
+      <label>Humidity (%)<input class="num" type="number" step="0.1" id="f_h"></label>
+      <label>Solar (W/m²)<input class="num" type="number" step="1" id="f_s"></label>
+      <button id="addRow">Add hour</button>
+      <button id="sample">Load sample day</button>
+      <button id="clear">Clear</button>
+    </div>
+    <div class="controls" style="margin-top:12px">
+      <label>Or upload CSV<input type="file" id="csv" accept=".csv"></label>
+      <label>Starting battery (%)<input class="num" type="number" id="soc0" value="80" min="0" max="100"></label>
+      <button class="primary" id="run">Run forecast</button>
+      <span id="count" style="color:var(--muted)">0 hours queued</span>
+    </div>
+    <div class="tablewrap" style="margin-top:12px;max-height:200px">
+      <table id="inTable"><thead><tr><th>Timestamp</th><th>Temp °C</th><th>Humidity %</th><th>Solar W/m²</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section class="stats">
+    <div class="panel stat"><div class="v" id="s_peak">–</div><div class="l">Peak demand (kW)</div></div>
+    <div class="panel stat"><div class="v" id="s_avg">–</div><div class="l">Average demand (kW)</div></div>
+    <div class="panel stat"><div class="v" id="s_over">–</div><div class="l">Overload hours (≥ 200 kW)</div></div>
+    <div class="panel stat"><div class="v" id="s_mode">–</div><div class="l">Hours on storage / main grid</div></div>
+    <div class="panel stat"><div class="v" id="s_soc">–</div><div class="l">Battery at end of window</div><div class="soc"><i id="socbar"></i></div></div>
+  </section>
+
+  <section class="panel">
+    <h2>Predicted load and battery charge</h2>
+    <div class="chartbox"><canvas id="chart" role="img" aria-label="Predicted demand in kW over 24 hours with thresholds and battery state of charge"></canvas></div>
+  </section>
+
+  <section class="two">
+    <div class="panel">
+      <h2>Hourly dispatch</h2>
+      <div class="tablewrap"><table id="outTable"><thead><tr><th>Hour</th><th>Demand kW</th><th>Mode</th><th>Battery %</th><th>Alert</th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <div class="panel">
+      <h2>System log</h2>
+      <div id="logs">Waiting for a forecast run.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let rows = [];            // queued input rows
+let chart = null;
+let csvFile = null;
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmtTs = v => v.replace("T"," ") + (v.length === 16 ? ":00" : "");
+
+function renderInput(){
+  const tb = $("inTable").querySelector("tbody");
+  tb.innerHTML = "";
+  rows.forEach((r,i)=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${r.timestamp}</td><td>${r.ambient_temp_c}</td><td>${r.humidity_pct}</td><td>${r.solar_irradiance_wm2}</td><td><button class="rm" aria-label="Remove row ${i+1}">Remove</button></td>`;
+    tr.querySelector("button").onclick = ()=>{rows.splice(i,1);renderInput();};
+    tb.appendChild(tr);
+  });
+  $("count").textContent = csvFile ? `CSV selected: ${csvFile.name}` : `${rows.length} hours queued`;
+}
+
+$("addRow").onclick = ()=>{
+  const ts=$("f_ts").value, t=$("f_t").value, h=$("f_h").value, s=$("f_s").value;
+  if(!ts){showError("Pick a timestamp before adding an hour.");return;}
+  rows.push({timestamp:fmtTs(ts), ambient_temp_c:t===""?null:+t, humidity_pct:h===""?null:+h, solar_irradiance_wm2:s===""?null:+s});
+  csvFile=null; $("csv").value=""; hideError(); renderInput();
+  // advance the timestamp one hour for quick entry
+  const d=new Date(ts); d.setHours(d.getHours()+1);
+  const p=n=>String(n).padStart(2,"0");
+  $("f_ts").value=`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:00`;
+};
+
+$("sample").onclick = ()=>{
+  const start=new Date(); start.setDate(start.getDate()+1); start.setHours(0,0,0,0);
+  const p=n=>String(n).padStart(2,"0");
+  rows=[]; csvFile=null; $("csv").value="";
+  for(let i=0;i<24;i++){
+    const d=new Date(start.getTime()+i*3600e3);
+    const temp = 24 + 8*Math.sin((i-9)/24*2*Math.PI);
+    const solar = Math.max(0, 900*Math.sin((i-6)/12*Math.PI));
+    rows.push({timestamp:`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:00:00`,
+      ambient_temp_c:+temp.toFixed(1), humidity_pct:+(70-temp+10).toFixed(1), solar_irradiance_wm2:+solar.toFixed(0)});
+  }
+  hideError(); renderInput();
+};
+$("clear").onclick = ()=>{rows=[];csvFile=null;$("csv").value="";renderInput();};
+$("csv").onchange = e=>{csvFile=e.target.files[0]||null; if(csvFile){rows=[];} renderInput();};
+
+function showError(m){const e=$("error");e.textContent=m;e.style.display="block";}
+function hideError(){$("error").style.display="none";}
+
+$("run").onclick = async ()=>{
+  hideError();
+  if(!csvFile && rows.length===0){showError("Add telemetry rows, load the sample day, or choose a CSV file first.");return;}
+  $("run").disabled=true; $("run").textContent="Forecasting…";
+  const soc=Math.max(0,Math.min(100,+$("soc0").value||80));
+  try{
+    let res;
+    if(csvFile){
+      const fd=new FormData(); fd.append("file",csvFile);
+      res=await fetch(`/api/forecast?initial_soc=${soc}`,{method:"POST",body:fd});
+    }else{
+      res=await fetch(`/api/forecast?initial_soc=${soc}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows})});
+    }
+    const data=await res.json();
+    if(data.logs) $("logs").textContent=data.logs.map(l=>"• "+l).join("\n");
+    if(!res.ok){showError(data.error||"Forecast failed.");return;}
+    render(data);
+  }catch(err){showError("Could not reach the server: "+err.message);}
+  finally{$("run").disabled=false;$("run").textContent="Run forecast";}
+};
+
+function render(d){
+  const R=d.rows, S=d.summary;
+  const isStore=m=>m.startsWith("Renewable");
+  // active state = first forecast hour
+  const first=R[0], ab=$("activeBadge");
+  ab.textContent=`${first.mode} (${first.timestamp.slice(11,16)})`;
+  ab.className="badge "+(isStore(first.mode)?"store":"grid");
+
+  const overs=R.filter(r=>r.overload);
+  const b=$("banner");
+  if(overs.length){
+    b.style.display="block";
+    b.textContent=`Critical overload: ${overs.length} hour(s) at or above 200 kW (peak ${S.peak_demand_kw} kW at ${overs.find(o=>o.predicted_demand_kw===S.peak_demand_kw)?.timestamp.slice(11,16)||"–"}).`;
+  }else b.style.display="none";
+
+  $("s_peak").textContent=S.peak_demand_kw;
+  $("s_avg").textContent=S.avg_demand_kw;
+  $("s_over").textContent=S.overload_hours;
+  $("s_mode").textContent=`${S.storage_hours} / ${S.grid_hours}`;
+  $("s_soc").textContent=S.final_soc_pct+"%";
+  $("socbar").style.width=S.final_soc_pct+"%";
+  $("socbar").style.background = S.final_soc_pct<20?css("--over"):css("--ok");
+
+  const tb=$("outTable").querySelector("tbody"); tb.innerHTML="";
+  R.forEach(r=>{
+    const tr=document.createElement("tr"); if(r.overload) tr.className="over";
+    tr.innerHTML=`<td>${r.timestamp.slice(5,16)}</td><td>${r.predicted_demand_kw.toFixed(1)}</td>
+      <td><span class="badge ${isStore(r.mode)?"store":"grid"}">${isStore(r.mode)?"Storage":"Main grid"}</span></td>
+      <td>${r.battery_soc_pct}</td><td>${r.overload?"Critical overload":(r.battery_flag||"")}</td>`;
+    tb.appendChild(tr);
+  });
+
+  drawChart(R);
+}
+
+function drawChart(R){
+  const labels=R.map(r=>r.timestamp.slice(11,16));
+  const ptColor=R.map(r=>r.overload?css("--over"):(r.mode.startsWith("Renewable")?css("--store"):css("--grid")));
+  const ink=css("--ink"), line=css("--line");
+  if(chart) chart.destroy();
+  chart=new Chart($("chart"),{
+    type:"line",
+    data:{labels,datasets:[
+      {label:"Predicted demand (kW)",data:R.map(r=>r.predicted_demand_kw),borderColor:ink,backgroundColor:ink,pointBackgroundColor:ptColor,pointRadius:5,tension:.25,yAxisID:"y"},
+      {label:"160 kW storage threshold",data:R.map(()=>160),borderColor:css("--store"),borderDash:[6,4],pointRadius:0,yAxisID:"y"},
+      {label:"200 kW overload",data:R.map(()=>200),borderColor:css("--over"),borderDash:[6,4],pointRadius:0,yAxisID:"y"},
+      {label:"Battery charge (%)",data:R.map(r=>r.battery_soc_pct),borderColor:css("--ok"),backgroundColor:"transparent",pointRadius:0,yAxisID:"y2"}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
+      plugins:{legend:{labels:{color:ink}}},
+      scales:{
+        x:{ticks:{color:ink},grid:{color:line}},
+        y:{title:{display:true,text:"kW",color:ink},ticks:{color:ink},grid:{color:line}},
+        y2:{position:"right",min:0,max:100,title:{display:true,text:"Battery %",color:ink},ticks:{color:ink},grid:{drawOnChartArea:false}}
+      }}
+  });
+}
+
+renderInput();
+</script>
+</body>
+</html>
